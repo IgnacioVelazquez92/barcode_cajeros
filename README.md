@@ -32,3 +32,23 @@ python -m venv .venv
 pip install -r requirements.txt
 python main.py
 ```
+
+### 🗂 Estructura
+
+```
+credenciales_app/
+├── app/
+│   ├── controller.py
+│   ├── db.py
+│   ├── pdf_generator.py
+│   ├── ui_form.py
+│   ├── ui_table.py
+│   ├── ui_exportador_multiple.py
+│   ├── utils.py
+├── main.py
+├── data/
+├── pdfs/
+├── excel/
+├── README.md
+└── .gitignore
+```
