@@ -1,6 +1,7 @@
 # app/ui_table.py
 import tkinter as tk
 from tkinter import ttk, messagebox
+from datetime import datetime
 from app import controller
 # modal exportación múltiple
 from app.ui_exportador_multiple import ExportadorMultiple
@@ -11,12 +12,15 @@ class TablaCajeros:
         self.parent = parent
         self.on_select_callback = on_select_callback
         self.cajero_seleccionado = None  # (id, nombre, dni, clave, fecha)
+        self.current_rows = []           # dataset actualmente mostrado en la tabla
+        # estado de orden actual
+        self.sort_state = {"col": None, "reverse": False}
 
         self._construir_interfaz()
         self.actualizar_tabla()
 
     def _construir_interfaz(self):
-        # 🔍 Búsqueda
+        # 🔍 Frame de búsqueda
         self.frame_busqueda = tk.Frame(self.parent)
         self.frame_busqueda.pack(fill="x", padx=10, pady=(10, 0))
 
@@ -29,23 +33,39 @@ class TablaCajeros:
                   command=self.buscar).pack(side="left", padx=(0, 5))
         tk.Button(self.frame_busqueda, text="Ver todos",
                   command=self.actualizar_tabla).pack(side="left", padx=(0, 15))
+
+        # 👉 Botones a la derecha
         tk.Button(self.frame_busqueda, text="Backup Excel",
                   command=self._backup_excel).pack(side="right")
         tk.Button(self.frame_busqueda, text="Exportar varios",
                   command=self._abrir_modal_exportador).pack(side="right", padx=(0, 8))
 
         # 📋 Tabla
-        columnas = ("ID", "Nombre", "DNI", "Clave", "Fecha creación")
+        self.columnas = ("ID", "Nombre", "DNI", "Clave", "Fecha creación")
         self.tree = ttk.Treeview(
-            self.parent, columns=columnas, show="headings", selectmode="browse", height=20)
-        for col in columnas:
+            self.parent,
+            columns=self.columnas,
+            show="headings",
+            selectmode="browse",
+            height=20
+        )
+        for col in self.columnas:
             self.tree.heading(col, text=col)
             self.tree.column(col, anchor="center")
+
+        # Encabezados clickeables para ordenar
+        self.tree.heading("ID", command=lambda: self._ordenar_por("ID"))
+        self.tree.heading(
+            "Nombre", command=lambda: self._ordenar_por("Nombre"))
+        self.tree.heading("Fecha creación",
+                          command=lambda: self._ordenar_por("Fecha creación"))
+
         self.tree.pack(fill="both", expand=True, padx=10, pady=(10, 5))
         self.tree.bind("<<TreeviewSelect>>", self._fila_seleccionada)
+        # doble click abre edición
         self.tree.bind("<Double-1>", self._doble_click_editar)
 
-        # Menú contextual
+        # Menú contextual (clic derecho)
         self.menu = tk.Menu(self.parent, tearoff=0)
         self.menu.add_command(
             label="Copiar Nombre + Clave (TAB)", command=self._copiar_nombre_clave)
@@ -60,7 +80,7 @@ class TablaCajeros:
         self.menu.add_command(label="Eliminar", command=self._eliminar)
         self.tree.bind("<Button-3>", self._abrir_menu_contextual)
 
-        # ⚙️ Acciones
+        # ⚙️ Botones CRUD + Copiar debajo de la tabla
         self.frame_acciones = tk.Frame(self.parent)
         self.frame_acciones.pack(fill="x", padx=10, pady=(0, 10))
 
@@ -87,11 +107,67 @@ class TablaCajeros:
             self.frame_acciones, text="📋 Copiar Clave", command=self._copiar_clave, state="disabled")
         self.btn_copiar_clave.pack(side="right", padx=5)
 
-    # ====== Tabla ======
+    # ====== Ordenamiento ======
+    def _ordenar_por(self, columna_nombre: str):
+        """Ordena current_rows por la columna solicitada, alternando asc/desc, y refresca la vista."""
+        if not self.current_rows:
+            return
+
+        # Preparar clave de orden según columna
+        if columna_nombre == "ID":
+            def key_fn(r): return int(r[0])  # r[0] = id
+        elif columna_nombre == "Nombre":
+            def key_fn(r): return (r[1] or "").upper()
+        elif columna_nombre == "Fecha creación":
+            # r[4] = 'YYYY-MM-DD'; por seguridad, parseo a datetime
+            def key_fn(r):
+                try:
+                    return datetime.strptime(r[4], "%Y-%m-%d")
+                except Exception:
+                    return datetime.min
+        else:
+            # Si clickean otra columna, no ordenamos (o podrías agregar más)
+            return
+
+        # Toggle asc/desc
+        if self.sort_state["col"] == columna_nombre:
+            self.sort_state["reverse"] = not self.sort_state["reverse"]
+        else:
+            self.sort_state["col"] = columna_nombre
+            self.sort_state["reverse"] = False  # arranca ascendente
+
+        # Ordenar
+        ordenada = sorted(self.current_rows, key=key_fn,
+                          reverse=self.sort_state["reverse"])
+        self._pintar_tabla(ordenada)
+
+        # Actualizar títulos con flecha
+        self._actualizar_encabezados(
+            columna_nombre, self.sort_state["reverse"])
+
+    def _actualizar_encabezados(self, activa: str, reverse: bool):
+        # Limpia encabezados
+        for col in self.columnas:
+            self.tree.heading(col, text=col)
+
+        # Agrega indicador ▲ / ▼
+        if activa in self.columnas:
+            flecha = " ▼" if reverse else " ▲"
+            self.tree.heading(activa, text=activa + flecha)
+
+        # Reasignar comandos (por si se resetean)
+        self.tree.heading("ID", command=lambda: self._ordenar_por("ID"))
+        self.tree.heading(
+            "Nombre", command=lambda: self._ordenar_por("Nombre"))
+        self.tree.heading("Fecha creación",
+                          command=lambda: self._ordenar_por("Fecha creación"))
+
+    # ====== Eventos de tabla ======
     def _fila_seleccionada(self, _event):
         seleccionado = self.tree.focus()
         if seleccionado:
             valores = self.tree.item(seleccionado, "values")
+            # valores = (ID, Nombre, DNI, Clave, Fecha)
             try:
                 id_cajero = int(valores[0])
             except (TypeError, ValueError):
@@ -217,6 +293,9 @@ class TablaCajeros:
         self.entry_busqueda.delete(0, tk.END)
         self._cargar_datos(controller.obtener_cajeros())
         self._deshabilitar_botones()
+        # Reset estado de sort visual
+        self.sort_state = {"col": None, "reverse": False}
+        self._actualizar_encabezados("", False)
 
     def buscar(self):
         filtro = self.entry_busqueda.get().strip()
@@ -224,15 +303,26 @@ class TablaCajeros:
             resultados = controller.buscar_cajeros(filtro)
             self._cargar_datos(resultados)
             self._deshabilitar_botones()
+            # Al cambiar dataset por búsqueda, reset de sort
+            self.sort_state = {"col": None, "reverse": False}
+            self._actualizar_encabezados("", False)
 
     def _cargar_datos(self, datos):
+        """Carga lista de tuplas (id, nombre, dni, clave, fecha) en Treeview."""
+        self.current_rows = list(datos)  # guardamos dataset actual
+        self._pintar_tabla(self.current_rows)
+
+    def _pintar_tabla(self, filas):
         self.tree.delete(*self.tree.get_children())
-        for cajero in datos:
+        for cajero in filas:
             self.tree.insert("", tk.END, values=cajero)
 
     # ====== Util ======
     def _abrir_modal_exportador(self):
         ExportadorMultiple(self.parent)
+
+    def _backup_excel(self):
+        controller.exportar_excel()
 
     def _habilitar_botones(self):
         self.btn_editar["state"] = "normal"
@@ -293,6 +383,3 @@ class TablaCajeros:
         entry_dni.bind("<Return>", lambda _e: guardar())
         top.bind("<Escape>", lambda _e: top.destroy())
         entry_nombre.focus_set()
-
-    def _backup_excel(self):
-        controller.exportar_excel()
