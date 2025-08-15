@@ -95,31 +95,21 @@ echo.
 echo [OK] Ejecutable creado: dist\GestorCredenciales.exe
 echo.
 
-REM 9) Crear acceso directo en el Escritorio
+REM 9) Crear acceso directo en el Escritorio (con variables expandidas correctamente)
 for /f "usebackq delims=" %%D in (`powershell -NoProfile -Command "[Environment]::GetFolderPath('Desktop')"`) do set "DESKTOP=%%D"
 
 if exist "%DESKTOP%\GestorCredenciales.lnk" del "%DESKTOP%\GestorCredenciales.lnk"
 
-if exist "icono.ico" (
-  powershell -NoProfile -Command ^
-    "$desktop=[Environment]::GetFolderPath('Desktop');" ^
-    "$lnk=Join-Path $desktop 'GestorCredenciales.lnk';" ^
-    "$ws=New-Object -ComObject WScript.Shell;" ^
-    "$s=$ws.CreateShortcut($lnk);" ^
-    "$s.TargetPath='$pwd\dist\GestorCredenciales.exe';" ^
-    "$s.WorkingDirectory='$pwd\dist';" ^
-    "$s.IconLocation='$pwd\icono.ico';" ^
-    "$s.Save()"
-) else (
-  powershell -NoProfile -Command ^
-    "$desktop=[Environment]::GetFolderPath('Desktop');" ^
-    "$lnk=Join-Path $desktop 'GestorCredenciales.lnk';" ^
-    "$ws=New-Object -ComObject WScript.Shell;" ^
-    "$s=$ws.CreateShortcut($lnk);" ^
-    "$s.TargetPath='$pwd\dist\GestorCredenciales.exe';" ^
-    "$s.WorkingDirectory='$pwd\dist';" ^
-    "$s.Save()"
-)
+powershell -NoProfile -Command ^
+  "$desktop=[Environment]::GetFolderPath('Desktop');" ^
+  "$root=(Get-Location).Path;" ^
+  "$lnk=Join-Path $desktop 'GestorCredenciales.lnk';" ^
+  "$ws=New-Object -ComObject WScript.Shell;" ^
+  "$s=$ws.CreateShortcut($lnk);" ^
+  "$s.TargetPath=(Join-Path $root 'dist\GestorCredenciales.exe');" ^
+  "$s.WorkingDirectory=(Join-Path $root 'dist');" ^
+  "if (Test-Path (Join-Path $root 'icono.ico')) { $s.IconLocation=(Join-Path $root 'icono.ico') }" ^
+  "$s.Save()"
 
 REM 10) Abrir carpeta dist
 explorer "%cd%\dist"
