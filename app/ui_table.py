@@ -3,7 +3,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime
 from app import controller
-# modal exportación múltiple
 from app.ui_exportador_multiple import ExportadorMultiple
 
 
@@ -11,21 +10,21 @@ class TablaCajeros:
     def __init__(self, parent, on_select_callback=lambda *args, **kwargs: None):
         self.parent = parent
         self.on_select_callback = on_select_callback
-        self.cajero_seleccionado = None  # (id, nombre, dni, clave, fecha)
-        self.current_rows = []           # dataset actualmente mostrado en la tabla
-        # estado de orden actual
+        # Dataset: (id, legajo, nombre, nombre_sistema, dni, clave, fecha, sucursal)
+        self.cajero_seleccionado = None
+        self.current_rows = []
         self.sort_state = {"col": None, "reverse": False}
 
         self._construir_interfaz()
         self.actualizar_tabla()
 
     def _construir_interfaz(self):
-        # 🔍 Frame de búsqueda
+        # 🔍 Búsqueda
         self.frame_busqueda = tk.Frame(self.parent)
         self.frame_busqueda.pack(fill="x", padx=10, pady=(10, 0))
 
-        tk.Label(self.frame_busqueda, text="Buscar por nombre o DNI:").pack(
-            side="left", padx=(0, 5))
+        tk.Label(self.frame_busqueda,
+                 text="Buscar :").pack(side="left", padx=(0, 5))
         self.entry_busqueda = tk.Entry(self.frame_busqueda, width=30)
         self.entry_busqueda.pack(side="left", padx=(0, 5))
 
@@ -34,14 +33,17 @@ class TablaCajeros:
         tk.Button(self.frame_busqueda, text="Ver todos",
                   command=self.actualizar_tabla).pack(side="left", padx=(0, 15))
 
-        # 👉 Botones a la derecha
         tk.Button(self.frame_busqueda, text="Backup Excel",
                   command=self._backup_excel).pack(side="right")
         tk.Button(self.frame_busqueda, text="Exportar varios",
                   command=self._abrir_modal_exportador).pack(side="right", padx=(0, 8))
 
+        tk.Button(self.frame_busqueda, text="📂PDFs",
+                  command=self._abrir_carpeta_pdfs).pack(side="right", padx=(0, 8))
+
         # 📋 Tabla
-        self.columnas = ("ID", "Nombre", "DNI", "Clave", "Fecha creación")
+        self.columnas = ("ID", "Legajo", "Nombre completo",
+                         "Nombre solutia", "DNI", "Clave", "Fecha creación", "Sucursal")
         self.tree = ttk.Treeview(
             self.parent,
             columns=self.columnas,
@@ -53,19 +55,18 @@ class TablaCajeros:
             self.tree.heading(col, text=col)
             self.tree.column(col, anchor="center")
 
-        # Encabezados clickeables para ordenar
+        # Encabezados clickeables
         self.tree.heading("ID", command=lambda: self._ordenar_por("ID"))
-        self.tree.heading(
-            "Nombre", command=lambda: self._ordenar_por("Nombre"))
+        self.tree.heading("Nombre completo",
+                          command=lambda: self._ordenar_por("Nombre completo"))
         self.tree.heading("Fecha creación",
                           command=lambda: self._ordenar_por("Fecha creación"))
 
         self.tree.pack(fill="both", expand=True, padx=10, pady=(10, 5))
         self.tree.bind("<<TreeviewSelect>>", self._fila_seleccionada)
-        # doble click abre edición
         self.tree.bind("<Double-1>", self._doble_click_editar)
 
-        # Menú contextual (clic derecho)
+        # Menú contextual
         self.menu = tk.Menu(self.parent, tearoff=0)
         self.menu.add_command(
             label="Copiar Nombre + Clave (TAB)", command=self._copiar_nombre_clave)
@@ -80,7 +81,7 @@ class TablaCajeros:
         self.menu.add_command(label="Eliminar", command=self._eliminar)
         self.tree.bind("<Button-3>", self._abrir_menu_contextual)
 
-        # ⚙️ Botones CRUD + Copiar debajo de la tabla
+        # ⚙️ Botones
         self.frame_acciones = tk.Frame(self.parent)
         self.frame_acciones.pack(fill="x", padx=10, pady=(0, 10))
 
@@ -109,56 +110,44 @@ class TablaCajeros:
 
     # ====== Ordenamiento ======
     def _ordenar_por(self, columna_nombre: str):
-        """Ordena current_rows por la columna solicitada, alternando asc/desc, y refresca la vista."""
         if not self.current_rows:
             return
 
-        # Preparar clave de orden según columna
         if columna_nombre == "ID":
-            def key_fn(r): return int(r[0])  # r[0] = id
-        elif columna_nombre == "Nombre":
-            def key_fn(r): return (r[1] or "").upper()
+            def key_fn(r): return int(r[0])
+        elif columna_nombre == "Nombre completo":
+            def key_fn(r): return (r[2] or "").upper()
         elif columna_nombre == "Fecha creación":
-            # r[4] = 'YYYY-MM-DD'; por seguridad, parseo a datetime
             def key_fn(r):
                 try:
-                    return datetime.strptime(r[4], "%Y-%m-%d")
+                    return datetime.strptime(r[6], "%Y-%m-%d")
                 except Exception:
                     return datetime.min
         else:
-            # Si clickean otra columna, no ordenamos (o podrías agregar más)
             return
 
-        # Toggle asc/desc
         if self.sort_state["col"] == columna_nombre:
             self.sort_state["reverse"] = not self.sort_state["reverse"]
         else:
             self.sort_state["col"] = columna_nombre
-            self.sort_state["reverse"] = False  # arranca ascendente
+            self.sort_state["reverse"] = False
 
-        # Ordenar
         ordenada = sorted(self.current_rows, key=key_fn,
                           reverse=self.sort_state["reverse"])
         self._pintar_tabla(ordenada)
-
-        # Actualizar títulos con flecha
         self._actualizar_encabezados(
             columna_nombre, self.sort_state["reverse"])
 
     def _actualizar_encabezados(self, activa: str, reverse: bool):
-        # Limpia encabezados
         for col in self.columnas:
             self.tree.heading(col, text=col)
-
-        # Agrega indicador ▲ / ▼
         if activa in self.columnas:
             flecha = " ▼" if reverse else " ▲"
             self.tree.heading(activa, text=activa + flecha)
 
-        # Reasignar comandos (por si se resetean)
         self.tree.heading("ID", command=lambda: self._ordenar_por("ID"))
-        self.tree.heading(
-            "Nombre", command=lambda: self._ordenar_por("Nombre"))
+        self.tree.heading("Nombre completo",
+                          command=lambda: self._ordenar_por("Nombre completo"))
         self.tree.heading("Fecha creación",
                           command=lambda: self._ordenar_por("Fecha creación"))
 
@@ -167,16 +156,12 @@ class TablaCajeros:
         seleccionado = self.tree.focus()
         if seleccionado:
             valores = self.tree.item(seleccionado, "values")
-            # valores = (ID, Nombre, DNI, Clave, Fecha)
+            # (id, legajo, nombre, nombre_sistema, dni, clave, fecha, sucursal)
             try:
                 id_cajero = int(valores[0])
             except (TypeError, ValueError):
                 return
-            nombre = valores[1]
-            dni = valores[2]
-            clave = valores[3] if len(valores) > 3 else ""
-            fecha = valores[4] if len(valores) > 4 else ""
-            self.cajero_seleccionado = (id_cajero, nombre, dni, clave, fecha)
+            self.cajero_seleccionado = tuple(valores)
             self._habilitar_botones()
         else:
             self.cajero_seleccionado = None
@@ -198,14 +183,21 @@ class TablaCajeros:
     def _editar(self):
         if not self.cajero_seleccionado:
             return
-        id_cajero, nombre, dni, *_ = self.cajero_seleccionado
-        self._abrir_modal_edicion(id_cajero, nombre, dni)
+        # Desempaquetar por claridad
+        id_cajero = int(self.cajero_seleccionado[0])
+        legajo = self.cajero_seleccionado[1] or ""
+        nombre = self.cajero_seleccionado[2]
+        nombre_sistema = self.cajero_seleccionado[3] or ""
+        dni = self.cajero_seleccionado[4]
+        sucursal = self.cajero_seleccionado[7] or ""
+        self._abrir_modal_edicion(
+            id_cajero, legajo, nombre, nombre_sistema, dni, sucursal)
 
     def _abrir_modal_cambiar_clave(self):
         if not self.cajero_seleccionado:
             return
-        id_cajero, nombre, *_ = self.cajero_seleccionado
-
+        id_cajero, nombre = int(
+            self.cajero_seleccionado[0]), self.cajero_seleccionado[2]
         top = tk.Toplevel(self.parent)
         top.title(f"Cambiar clave: {nombre}")
         top.geometry("420x180")
@@ -218,9 +210,8 @@ class TablaCajeros:
         entry_clave.grid(row=0, column=1, padx=8, pady=8)
 
         var_ofuscar = tk.BooleanVar(value=True)
-        chk = tk.Checkbutton(
-            top, text="Ofuscar (recomendado)", variable=var_ofuscar)
-        chk.grid(row=1, column=1, sticky="w", padx=8)
+        tk.Checkbutton(top, text="Ofuscar (recomendado)", variable=var_ofuscar).grid(
+            row=1, column=1, sticky="w", padx=8)
 
         cont = tk.Frame(top)
         cont.grid(row=2, column=0, columnspan=2, pady=10, sticky="e")
@@ -230,7 +221,7 @@ class TablaCajeros:
             if not nueva:
                 messagebox.showerror("Error", "Ingresá una clave.")
                 return
-            if controller.actualizar_clave_personalizada(self.cajero_seleccionado[0], nueva, ofuscar=var_ofuscar.get()):
+            if controller.actualizar_clave_personalizada(int(self.cajero_seleccionado[0]), nueva, ofuscar=var_ofuscar.get()):
                 self.actualizar_tabla()
                 top.destroy()
 
@@ -245,14 +236,14 @@ class TablaCajeros:
 
     def _eliminar(self):
         if self.cajero_seleccionado:
-            id_cajero, *_ = self.cajero_seleccionado
+            id_cajero = int(self.cajero_seleccionado[0])
             if messagebox.askyesno("Eliminar", "¿Estás seguro que deseas eliminar este cajero?"):
                 if controller.eliminar_cajero(id_cajero):
                     self.actualizar_tabla()
 
     def _exportar_pdf(self):
         if self.cajero_seleccionado:
-            id_cajero, *_ = self.cajero_seleccionado
+            id_cajero = int(self.cajero_seleccionado[0])
             controller.reimprimir_pdf(id_cajero)
 
     # ====== Copiar ======
@@ -267,33 +258,32 @@ class TablaCajeros:
     def _copiar_nombre_clave(self):
         if not self.cajero_seleccionado:
             return
-        _, nombre, _, clave, _ = self.cajero_seleccionado
+        # Dataset: (id, legajo, nombre, nombre_sistema, dni, clave, fecha, sucursal)
+        nombre_solutia = (self.cajero_seleccionado[3] or "").strip()
+        nombre = nombre_solutia if nombre_solutia else self.cajero_seleccionado[2]
+        clave = self.cajero_seleccionado[5]
         self._copiar_al_clipboard(f"{nombre}\t{clave}")
 
     def _copiar_clave(self):
         if not self.cajero_seleccionado:
             return
-        _, _, _, clave, _ = self.cajero_seleccionado
-        self._copiar_al_clipboard(clave)
+        self._copiar_al_clipboard(self.cajero_seleccionado[5])
 
     def _copiar_nombre(self):
         if not self.cajero_seleccionado:
             return
-        _, nombre, _, _, _ = self.cajero_seleccionado
-        self._copiar_al_clipboard(nombre)
+        self._copiar_al_clipboard(self.cajero_seleccionado[2])
 
     def _copiar_dni(self):
         if not self.cajero_seleccionado:
             return
-        _, _, dni, _, _ = self.cajero_seleccionado
-        self._copiar_al_clipboard(dni)
+        self._copiar_al_clipboard(self.cajero_seleccionado[4])
 
     # ====== Buscar / Actualizar ======
     def actualizar_tabla(self):
         self.entry_busqueda.delete(0, tk.END)
         self._cargar_datos(controller.obtener_cajeros())
         self._deshabilitar_botones()
-        # Reset estado de sort visual
         self.sort_state = {"col": None, "reverse": False}
         self._actualizar_encabezados("", False)
 
@@ -303,13 +293,11 @@ class TablaCajeros:
             resultados = controller.buscar_cajeros(filtro)
             self._cargar_datos(resultados)
             self._deshabilitar_botones()
-            # Al cambiar dataset por búsqueda, reset de sort
             self.sort_state = {"col": None, "reverse": False}
             self._actualizar_encabezados("", False)
 
     def _cargar_datos(self, datos):
-        """Carga lista de tuplas (id, nombre, dni, clave, fecha) en Treeview."""
-        self.current_rows = list(datos)  # guardamos dataset actual
+        self.current_rows = list(datos)
         self._pintar_tabla(self.current_rows)
 
     def _pintar_tabla(self, filas):
@@ -340,37 +328,78 @@ class TablaCajeros:
         self.btn_copiar_nc["state"] = "disabled"
         self.btn_copiar_clave["state"] = "disabled"
 
-    # ====== Modal de edición de datos ======
-    def _abrir_modal_edicion(self, id_cajero: int, nombre: str, dni: str):
+    # ====== Modal de edición: incluye Legajo / Solutia / Sucursal / Fecha ======
+    def _abrir_modal_edicion(self, id_cajero: int, legajo: str, nombre: str, nombre_sistema: str, dni: str, sucursal: str):
+        # OJO: la fecha está en índice 6 del dataset
+        fecha_actual = ""
+        if self.cajero_seleccionado and len(self.cajero_seleccionado) >= 7:
+            fecha_actual = self.cajero_seleccionado[6] or ""
+
         top = tk.Toplevel(self.parent)
         top.title(f"Editar cajero #{id_cajero}")
-        top.geometry("420x180")
+        top.geometry("540x320")
         top.transient(self.parent)
         top.grab_set()
 
-        tk.Label(top, text="Nombre completo:").grid(
-            row=0, column=0, padx=8, pady=8, sticky="e")
-        entry_nombre = tk.Entry(top, width=35)
-        entry_nombre.grid(row=0, column=1, padx=8, pady=8)
+        tk.Label(top, text="Legajo:").grid(
+            row=0, column=0, padx=8, pady=6, sticky="e")
+        entry_legajo = tk.Entry(top, width=46)
+        entry_legajo.grid(row=0, column=1, padx=8, pady=6)
+        entry_legajo.insert(0, legajo)
+
+        tk.Label(top, text="Nombre completo:*").grid(
+            row=1, column=0, padx=8, pady=6, sticky="e")
+        entry_nombre = tk.Entry(top, width=46)
+        entry_nombre.grid(row=1, column=1, padx=8, pady=6)
         entry_nombre.insert(0, nombre)
 
-        tk.Label(top, text="DNI:").grid(
-            row=1, column=0, padx=8, pady=8, sticky="e")
-        entry_dni = tk.Entry(top, width=35)
-        entry_dni.grid(row=1, column=1, padx=8, pady=8)
+        tk.Label(top, text="Nombre solutia:*").grid(
+            row=2, column=0, padx=8, pady=6, sticky="e")
+        entry_solutia = tk.Entry(top, width=46)
+        entry_solutia.grid(row=2, column=1, padx=8, pady=6)
+        entry_solutia.insert(0, nombre_sistema)
+
+        tk.Label(top, text="DNI:*").grid(
+            row=3, column=0, padx=8, pady=6, sticky="e")
+        entry_dni = tk.Entry(top, width=46)
+        entry_dni.grid(row=3, column=1, padx=8, pady=6)
         entry_dni.insert(0, dni)
 
+        tk.Label(top, text="Sucursal:").grid(
+            row=4, column=0, padx=8, pady=6, sticky="e")
+        entry_sucursal = tk.Entry(top, width=46)
+        entry_sucursal.grid(row=4, column=1, padx=8, pady=6)
+        entry_sucursal.insert(0, sucursal)
+
+        tk.Label(top, text="Fecha alta:*").grid(
+            row=5, column=0, padx=8, pady=6, sticky="e")
+        entry_fecha = tk.Entry(top, width=46)
+        entry_fecha.grid(row=5, column=1, padx=8, pady=6)
+        entry_fecha.insert(0, fecha_actual)
+
         cont = tk.Frame(top)
-        cont.grid(row=2, column=0, columnspan=2, pady=10, sticky="e")
+        cont.grid(row=6, column=0, columnspan=2, pady=10, sticky="e")
 
         def guardar():
+            nuevo_legajo = entry_legajo.get().strip() or None
             nuevo_nombre = entry_nombre.get().strip()
+            nuevo_solutia = entry_solutia.get().strip() or None
             nuevo_dni = entry_dni.get().strip()
+            nueva_sucursal = entry_sucursal.get().strip() or None
+            nueva_fecha = entry_fecha.get().strip() or None
             if not nuevo_nombre or not nuevo_dni.isdigit():
                 messagebox.showerror(
                     "Error", "Nombre y DNI válidos requeridos.")
                 return
-            if controller.editar_cajero(id_cajero, nuevo_nombre, nuevo_dni):
+            if controller.editar_cajero(
+                id_cajero,
+                nuevo_nombre,
+                nuevo_dni,
+                nuevo_legajo,
+                nuevo_solutia,
+                nueva_sucursal,
+                nueva_fecha,
+            ):
                 self.actualizar_tabla()
                 top.destroy()
 
@@ -379,7 +408,14 @@ class TablaCajeros:
         tk.Button(cont, text="Cancelar",
                   command=top.destroy).pack(side="right")
 
+        entry_legajo.bind("<Return>", lambda _e: guardar())
         entry_nombre.bind("<Return>", lambda _e: guardar())
+        entry_solutia.bind("<Return>", lambda _e: guardar())
         entry_dni.bind("<Return>", lambda _e: guardar())
+        entry_sucursal.bind("<Return>", lambda _e: guardar())
+        entry_fecha.bind("<Return>", lambda _e: guardar())
         top.bind("<Escape>", lambda _e: top.destroy())
         entry_nombre.focus_set()
+
+    def _abrir_carpeta_pdfs(self):
+        controller.abrir_carpeta_pdfs()

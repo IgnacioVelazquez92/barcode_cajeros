@@ -5,10 +5,12 @@ from reportlab.graphics.barcode import code128
 from reportlab.lib.pagesizes import A4
 import os
 from app import db
+from app.paths import base_dir, ensure_dirs
 
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+BASE_DIR = base_dir()
 PDF_DIR = os.path.join(BASE_DIR, "pdfs")
-os.makedirs(PDF_DIR, exist_ok=True)
+ensure_dirs("pdfs")
+
 
 # Medidas de la credencial
 CRED_W = 8.3 * cm   # ancho
@@ -32,9 +34,11 @@ def _barcode_ajustado(clave: str, max_width: float):
     return code128.Code128(clave, barHeight=BAR_H, barWidth=bar_width)
 
 
-def generar_pdf(nombre, clave):
-    """PDF A4 con UNA credencial centrada. Nombre ARRIBA y código ABAJO."""
-    ruta = os.path.join(PDF_DIR, f"{nombre}.pdf")
+def generar_pdf(nombre_mostrar, clave):
+    """PDF A4 con UNA credencial centrada.
+    Muestra 'nombre_mostrar' (idealmente 'nombre_sistema') pegado al código de barras.
+    """
+    ruta = os.path.join(PDF_DIR, f"{nombre_mostrar}.pdf")
     c = canvas.Canvas(ruta, pagesize=A4)
 
     page_w, page_h = A4
@@ -44,22 +48,20 @@ def generar_pdf(nombre, clave):
     # Marco (opcional)
     c.roundRect(x, y, CRED_W, CRED_H, 6)
 
-    # --- Nombre (más cerca del código) ---
-    c.setFont("Helvetica-Bold", 12)
-    nombre_y = y + CRED_H - 0.5 * cm     # antes 0.8cm
-    c.drawCentredString(x + CRED_W / 2, nombre_y, nombre)
-
-    # --- Código de barras (más arriba) ---
+    # --- Código de barras (primero) ---
     barcode = _barcode_ajustado(clave, BAR_MAX_W)
     bar_w = barcode.width
     bar_x = x + (CRED_W - bar_w) / 2
-    bar_y = y + 1.2 * cm                 # antes 0.6cm
-
-    # Si por altura choca con el nombre, lo ajustamos
-    if bar_y + BAR_H > nombre_y - 0.4 * cm:
-        bar_y = max(y + 0.3 * cm, nombre_y - 0.4 * cm - BAR_H)
+    bar_y = y + 0.9 * cm  # un poco más arriba del borde inferior
 
     barcode.drawOn(c, bar_x, bar_y)
+
+    # --- Nombre (justo por encima del código) ---
+    c.setFont("Helvetica-Bold", 12)
+    nombre_y = bar_y + BAR_H + 0.2 * cm  # “más cerca” del código
+    # Tope superior de seguridad
+    nombre_y = min(nombre_y, y + CRED_H - 0.3 * cm)
+    c.drawCentredString(x + CRED_W / 2, nombre_y, nombre_mostrar)
 
     c.showPage()
     c.save()
@@ -67,7 +69,8 @@ def generar_pdf(nombre, clave):
 
 
 def generar_pdf_multiples(ids):
-    """PDF A4 con múltiples credenciales por hoja, paginando automáticamente."""
+    """PDF A4 con múltiples credenciales por hoja, paginando automáticamente.
+    Muestra 'nombre_sistema' si existe; caso contrario, 'nombre'."""
     try:
         ruta = os.path.join(PDF_DIR, "credenciales_multiples.pdf")
         c = canvas.Canvas(ruta, pagesize=A4)
@@ -95,10 +98,17 @@ def generar_pdf_multiples(ids):
             row = slot // cols
 
             x = margin + col * (CRED_W + gap_x)
-            # dibujo desde arriba hacia abajo
+            # desde arriba hacia abajo
             y = page_h - margin - (row + 1) * (CRED_H + gap_y) + gap_y
 
-            _dibujar_credencial(c, x, y, caj[1], caj[3])
+            # Dataset: (id, legajo, nombre, nombre_sistema, dni, clave, fecha, sucursal)
+            nombre_completo = caj[2] or ""
+            nombre_sistema = caj[3] or ""
+            nombre_mostrar = (nombre_sistema.strip()
+                              or nombre_completo.strip())
+            clave = caj[5]
+
+            _dibujar_credencial(c, x, y, nombre_mostrar, clave)
 
         if cajeros:
             c.showPage()
@@ -109,22 +119,20 @@ def generar_pdf_multiples(ids):
         return False
 
 
-def _dibujar_credencial(c: canvas.Canvas, x: float, y: float, nombre: str, clave: str):
-    """Dibuja una credencial (8.3x5.3 cm) con NOMBRE arriba y BARCODE debajo, más cercanos."""
+def _dibujar_credencial(c: canvas.Canvas, x: float, y: float, nombre_mostrar: str, clave: str):
+    """Dibuja una credencial (8.3x5.3 cm) con el NOMBRE pegado al código de barras."""
     c.roundRect(x, y, CRED_W, CRED_H, 6)
 
-    # Nombre (más cerca del código)
-    c.setFont("Helvetica-Bold", 12)
-    nombre_y = y + CRED_H - 0.5 * cm     # antes 0.8cm
-    c.drawCentredString(x + CRED_W / 2, nombre_y, nombre)
-
-    # Código de barras (más arriba)
+    # Código de barras (primero)
     barcode = _barcode_ajustado(clave, BAR_MAX_W)
     bar_w = barcode.width
     bar_x = x + (CRED_W - bar_w) / 2
-    bar_y = y + 1.2 * cm                 # antes 0.6cm
-
-    if bar_y + BAR_H > nombre_y - 0.4 * cm:
-        bar_y = max(y + 0.3 * cm, nombre_y - 0.4 * cm - BAR_H)
+    bar_y = y + 0.9 * cm
 
     barcode.drawOn(c, bar_x, bar_y)
+
+    # Nombre (justo por encima)
+    c.setFont("Helvetica-Bold", 12)
+    nombre_y = bar_y + BAR_H + 0.2 * cm
+    nombre_y = min(nombre_y, y + CRED_H - 0.3 * cm)
+    c.drawCentredString(x + CRED_W / 2, nombre_y, nombre_mostrar)

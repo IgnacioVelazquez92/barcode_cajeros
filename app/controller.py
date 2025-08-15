@@ -1,41 +1,109 @@
 # app/controller.py
+import subprocess
+import sys
 from tkinter import messagebox
 from app import db
 from app import pdf_generator
-from app.utils import generar_clave, ofuscar_clave  # ya existente
+from app.utils import generar_clave, ofuscar_clave, normalizar_fecha
 import os
 from datetime import datetime
+import sqlite3
 
 
-def crear_cajero(nombre: str, dni: str) -> bool:
-    if not nombre or not dni.isdigit():
-        messagebox.showerror("Error", "Nombre y DNI válidos requeridos.")
+def crear_cajero(
+    nombre_completo: str,
+    dni: str,
+    legajo: str | None = None,
+    nombre_sistema: str | None = None,
+    sucursal: str | None = None,
+    fecha_creacion: str | None = None,
+) -> bool:
+    """
+    Alta con campos opcionales (legajo, nombre_sistema, sucursal, fecha_creacion).
+    DNI debe ser único. La fecha se normaliza a YYYY-MM-DD (acepta DD/MM/YYYY).
+    """
+    if not nombre_completo or not dni or not dni.isdigit():
+        messagebox.showerror(
+            "Error", "Nombre completo y DNI numérico son requeridos.")
         return False
 
-    nombre = nombre.strip().upper()
+    nombre_completo = nombre_completo.strip().upper()
+    legajo = legajo.strip().upper() if legajo else None
+    nombre_sistema = nombre_sistema.strip().upper() if nombre_sistema else None
+    sucursal = sucursal.strip().upper() if sucursal else None
+
+    # Fecha
+    try:
+        fecha_norm = normalizar_fecha(fecha_creacion)
+    except ValueError as ve:
+        messagebox.showerror("Fecha inválida", str(ve))
+        return False
+
+    if db.existe_dni(dni):
+        messagebox.showerror("Error", f"Ya existe un cajero con el DNI {dni}.")
+        return False
+
     clave_base = generar_clave(dni)
     clave_guardar = ofuscar_clave(clave_base)
 
     try:
-        db.insertar_cajero(nombre, dni, clave_guardar)
+        db.insertar_cajero(
+            nombre_completo, dni, clave_guardar,
+            legajo=legajo, nombre_sistema=nombre_sistema, sucursal=sucursal,
+            fecha_creacion=fecha_norm
+        )
         return True
+    except sqlite3.IntegrityError:
+        messagebox.showerror("Error", f"Ya existe un cajero con el DNI {dni}.")
+        return False
     except Exception as e:
         messagebox.showerror("Error", f"No se pudo guardar el cajero: {e}")
         return False
 
 
-def editar_cajero(id_cajero: int, nombre: str, dni: str) -> bool:
-    if not nombre or not dni.isdigit():
-        messagebox.showerror("Error", "Nombre y DNI válidos requeridos.")
+def editar_cajero(
+    id_cajero: int,
+    nombre_completo: str,
+    dni: str,
+    legajo: str | None = None,
+    nombre_sistema: str | None = None,
+    sucursal: str | None = None,
+    fecha_creacion: str | None = None,
+) -> bool:
+    """
+    Edición completa, incluyendo fecha de creación.
+    """
+    if not nombre_completo or not dni.isdigit():
+        messagebox.showerror(
+            "Error", "Nombre completo y DNI válidos requeridos.")
         return False
 
-    nombre = nombre.strip().upper()
+    nombre_completo = nombre_completo.strip().upper()
+    legajo = legajo.strip().upper() if legajo else None
+    nombre_sistema = nombre_sistema.strip().upper() if nombre_sistema else None
+    sucursal = sucursal.strip().upper() if sucursal else None
+
+    try:
+        fecha_norm = normalizar_fecha(
+            fecha_creacion) if fecha_creacion is not None else None
+    except ValueError as ve:
+        messagebox.showerror("Fecha inválida", str(ve))
+        return False
+
     clave_base = generar_clave(dni)
     clave_guardar = ofuscar_clave(clave_base)
 
     try:
-        db.actualizar_cajero(id_cajero, nombre, dni, clave_guardar)
+        db.actualizar_cajero(
+            id_cajero, nombre_completo, dni, clave_guardar,
+            legajo=legajo, nombre_sistema=nombre_sistema, sucursal=sucursal,
+            fecha_creacion=fecha_norm
+        )
         return True
+    except sqlite3.IntegrityError:
+        messagebox.showerror(
+            "Error", f"El DNI {dni} ya existe asignado a otro cajero.")
+        return False
     except Exception as e:
         messagebox.showerror("Error", f"No se pudo actualizar el cajero: {e}")
         return False
@@ -43,20 +111,37 @@ def editar_cajero(id_cajero: int, nombre: str, dni: str) -> bool:
 
 def actualizar_clave_personalizada(id_cajero: int, clave_plana: str, ofuscar: bool = True) -> bool:
     """
-    Permite setear una clave específica (a pedido).
-    - ofuscar=True: aplica la misma ofuscación que usamos siempre.
-    - ofuscar=False: guarda tal cual (útil si la dueña quiere exactamente esa clave).
+    Actualiza exclusivamente la clave del cajero.
+    - Si ofuscar=True: aplica ofuscar_clave(clave_plana)
+    - Si ofuscar=False: guarda tal cual (p.ej. 'pepe')
+    Conserva legajo, nombre_sistema, sucursal y fecha_creacion sin cambios.
     """
     cajero = db.obtener_por_id(id_cajero)
     if not cajero:
         messagebox.showerror("Error", "Cajero no encontrado.")
         return False
 
-    _, nombre, dni, _, _ = cajero
+    # Dataset: (id, legajo, nombre, nombre_sistema, dni, clave, fecha, sucursal)
+    legajo = cajero[1]
+    nombre = cajero[2]
+    nombre_sistema = cajero[3]
+    dni = cajero[4]
+    sucursal = cajero[7]
+
     try:
         clave_a_guardar = ofuscar_clave(
             clave_plana) if ofuscar else clave_plana
-        db.actualizar_cajero(id_cajero, nombre, dni, clave_a_guardar)
+        # No tocamos fecha_creacion (pasamos None para que COALESCE la mantenga)
+        db.actualizar_cajero(
+            id_cajero=id_cajero,
+            nombre_completo=nombre,
+            dni=dni,
+            clave=clave_a_guardar,
+            legajo=legajo,
+            nombre_sistema=nombre_sistema,
+            sucursal=sucursal,
+            fecha_creacion=None,
+        )
         return True
     except Exception as e:
         messagebox.showerror("Error", f"No se pudo actualizar la clave: {e}")
@@ -86,11 +171,16 @@ def reimprimir_pdf(id_cajero: int) -> bool:
         messagebox.showerror("Error", "Cajero no encontrado.")
         return False
 
-    nombre, clave = cajero[1], cajero[3]
+    # Dataset: (id, legajo, nombre, nombre_sistema, dni, clave, fecha, sucursal)
+    nombre_completo = cajero[2] or ""
+    nombre_sistema = cajero[3] or ""
+    etiqueta = (nombre_sistema.strip() or nombre_completo.strip())
+    clave = cajero[5]
+
     try:
-        pdf_generator.generar_pdf(nombre, clave)
+        pdf_generator.generar_pdf(etiqueta, clave)
         messagebox.showinfo(
-            "Reimpresión", f"PDF de {nombre} generado correctamente.")
+            "Reimpresión", f"PDF de {etiqueta} generado correctamente.")
         return True
     except Exception as e:
         messagebox.showerror("Error", f"No se pudo generar el PDF: {e}")
@@ -98,23 +188,22 @@ def reimprimir_pdf(id_cajero: int) -> bool:
 
 
 def exportar_excel() -> bool:
-    """Exporta todos los cajeros a un archivo Excel en /excel con timestamp."""
+    """Exporta todos los cajeros a /excel con timestamp, incluyendo legajo, nombre_sistema y sucursal."""
     try:
-        # Lazy import para no cargar si no se usa
         from openpyxl import Workbook
     except ImportError:
         messagebox.showerror(
-            "Falta dependencia",
-            "Necesitas instalar openpyxl:\n\npip install openpyxl"
-        )
+            "Falta dependencia", "Necesitas instalar openpyxl:\n\npip install openpyxl")
         return False
 
-    registros = db.obtener_todos()  # [(id, nombre, dni, clave, fecha)]
+    # (id, legajo, nombre, nombre_sistema, dni, clave, fecha, sucursal)
+    registros = db.obtener_todos()
     if not registros:
         messagebox.showinfo("Backup", "No hay registros para exportar.")
         return False
 
-    # Carpeta destino
+    import os
+    from datetime import datetime
     base_dir = os.path.dirname(os.path.dirname(__file__))
     excel_dir = os.path.join(base_dir, "excel")
     os.makedirs(excel_dir, exist_ok=True)
@@ -122,15 +211,13 @@ def exportar_excel() -> bool:
     ts = datetime.now().strftime("%Y%m%d_%H%M")
     ruta = os.path.join(excel_dir, f"backup_{ts}.xlsx")
 
-    # Crear workbook
     wb = Workbook()
     ws = wb.active
     ws.title = "Cajeros"
 
-    # Encabezados
-    ws.append(["ID", "Nombre", "DNI", "Clave", "Fecha creación"])
+    ws.append(["ID", "Legajo", "Nombre completo", "Nombre solutia",
+              "DNI", "Clave", "Fecha creación", "Sucursal"])
 
-    # Filas
     for row in registros:
         ws.append(list(row))
 
@@ -150,3 +237,22 @@ def exportar_excel() -> bool:
     except Exception as e:
         messagebox.showerror("Error", f"No se pudo guardar el Excel:\n{e}")
         return False
+
+
+def abrir_carpeta(path: str) -> bool:
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(path)  # type: ignore
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+        return True
+    except Exception as e:
+        messagebox.showerror("Error", f"No se pudo abrir la carpeta:\n{e}")
+        return False
+
+
+def abrir_carpeta_pdfs() -> bool:
+    from app.pdf_generator import PDF_DIR
+    return abrir_carpeta(PDF_DIR)

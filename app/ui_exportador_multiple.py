@@ -92,13 +92,15 @@ class ExportadorMultiple:
     def _actualizar_tabla(self, datos):
         self.tree.delete(*self.tree.get_children())
         for cajero in datos:
-            id_, nombre, dni = cajero[0], cajero[1], cajero[2]
+            id_ = cajero[0]
+            nombre = cajero[2]
+            dni = cajero[4]
             marcado = CHECKED if id_ in self.seleccionados else UNCHECKED
             self.tree.insert("", tk.END, iid=id_,
                              values=(marcado, id_, nombre, dni))
         self._actualizar_contador()
-
     # ----------------- Interacción UI -----------------
+
     def _on_click(self, event):
         # Identificar fila y columna clickeada
         row_id = self.tree.identify_row(event.y)

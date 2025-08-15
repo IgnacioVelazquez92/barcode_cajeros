@@ -1,3 +1,4 @@
+# app/utils.py
 from datetime import datetime
 
 
@@ -42,3 +43,38 @@ def desofuscar_clave(ofuscada: str, k: int | None = None) -> str:
         else:
             tmp.append(ch)
     return "".join(tmp)[::-1]
+
+
+def hoy_str() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def normalizar_fecha(fecha_str: str | None) -> str:
+    """
+    Devuelve 'YYYY-MM-DD'.
+    Acepta:
+      - 'YYYY-MM-DD' (directo)
+      - 'DD/MM/YYYY'
+      - vacío/None -> hoy
+    Lanza ValueError si no es válida.
+    """
+    if not fecha_str or not str(fecha_str).strip():
+        return hoy_str()
+
+    s = fecha_str.strip()
+    # ISO
+    try:
+        dt = datetime.strptime(s, "%Y-%m-%d")
+        return dt.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+
+    # DD/MM/YYYY
+    try:
+        dt = datetime.strptime(s, "%d/%m/%Y")
+        return dt.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+
+    raise ValueError(
+        f"Fecha inválida: {fecha_str}. Usa YYYY-MM-DD o DD/MM/YYYY.")
