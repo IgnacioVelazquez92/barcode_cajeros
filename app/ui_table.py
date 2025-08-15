@@ -1,6 +1,6 @@
 # app/ui_table.py
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from datetime import datetime
 from app import controller
 from app.ui_exportador_multiple import ExportadorMultiple
@@ -35,6 +35,8 @@ class TablaCajeros:
 
         tk.Button(self.frame_busqueda, text="Backup Excel",
                   command=self._backup_excel).pack(side="right")
+        tk.Button(self.frame_busqueda, text="📥 Importar Excel",
+                  command=self._importar_excel).pack(side="right", padx=(0, 8))
         tk.Button(self.frame_busqueda, text="Exportar varios",
                   command=self._abrir_modal_exportador).pack(side="right", padx=(0, 8))
 
@@ -245,6 +247,19 @@ class TablaCajeros:
         if self.cajero_seleccionado:
             id_cajero = int(self.cajero_seleccionado[0])
             controller.reimprimir_pdf(id_cajero)
+
+    def _importar_excel(self):
+        ruta = filedialog.askopenfilename(
+            title="Seleccionar Excel de importación",
+            filetypes=[("Excel", "*.xlsx")]
+        )
+        if not ruta:
+            return
+        try:
+            controller.importar_desde_excel(ruta)
+            self.actualizar_tabla()
+        except Exception as e:
+            messagebox.showerror("Importar Excel", f"Ocurrió un error:\n{e}")
 
     # ====== Copiar ======
     def _copiar_al_clipboard(self, texto: str):

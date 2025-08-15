@@ -8,6 +8,8 @@ from app.utils import generar_clave, ofuscar_clave, normalizar_fecha
 import os
 from datetime import datetime
 import sqlite3
+from app.paths import base_dir, ensure_dirs
+from openpyxl import load_workbook
 
 
 def crear_cajero(
@@ -188,52 +190,102 @@ def reimprimir_pdf(id_cajero: int) -> bool:
 
 
 def exportar_excel() -> bool:
-    """Exporta todos los cajeros a /excel con timestamp, incluyendo legajo, nombre_sistema y sucursal."""
-    try:
-        from openpyxl import Workbook
-    except ImportError:
-        messagebox.showerror(
-            "Falta dependencia", "Necesitas instalar openpyxl:\n\npip install openpyxl")
-        return False
+    """
+    Exporta todos los cajeros a un Excel en /excel con timestamp.
+    - Si hay registros: los vuelca.
+    - Si no hay registros: genera una PLANTILLA solo con encabezados (útil para importar luego).
+    Abre la carpeta al finalizar. Si openpyxl no está disponible, hace fallback a PDF.
+    Formato de columnas:
+      ID | Legajo | Nombre completo | Nombre solutia | DNI | Clave | Fecha creación | Sucursal
+    """
+    from app.paths import base_dir, ensure_dirs
+    ensure_dirs("excel")
+    excel_dir = os.path.join(base_dir(), "excel")
+    ts = datetime.now().strftime("%Y%m%d_%H%M")
+    ruta_xlsx = os.path.join(excel_dir, f"backup_{ts}.xlsx")
 
     # (id, legajo, nombre, nombre_sistema, dni, clave, fecha, sucursal)
     registros = db.obtener_todos()
-    if not registros:
-        messagebox.showinfo("Backup", "No hay registros para exportar.")
-        return False
-
-    import os
-    from datetime import datetime
-    base_dir = os.path.dirname(os.path.dirname(__file__))
-    excel_dir = os.path.join(base_dir, "excel")
-    os.makedirs(excel_dir, exist_ok=True)
-
-    ts = datetime.now().strftime("%Y%m%d_%H%M")
-    ruta = os.path.join(excel_dir, f"backup_{ts}.xlsx")
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Cajeros"
-
-    ws.append(["ID", "Legajo", "Nombre completo", "Nombre solutia",
-              "DNI", "Clave", "Fecha creación", "Sucursal"])
-
-    for row in registros:
-        ws.append(list(row))
-
-    # Auto ancho simple
-    for col in ws.columns:
-        max_len = 0
-        col_letter = col[0].column_letter
-        for cell in col:
-            val = str(cell.value) if cell.value is not None else ""
-            max_len = max(max_len, len(val))
-        ws.column_dimensions[col_letter].width = min(max_len + 2, 40)
 
     try:
-        wb.save(ruta)
-        messagebox.showinfo("Backup", f"Excel generado:\n{ruta}")
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Cajeros"
+
+        # Encabezados (siempre)
+        ws.append(["ID", "Legajo", "Nombre completo", "Nombre solutia",
+                  "DNI", "Clave", "Fecha creación", "Sucursal"])
+
+        # Filas (solo si hay)
+        for r in registros:
+            ws.append([
+                r[0], r[1] or "", r[2] or "", r[3] or "", r[4] or "",
+                r[5] or "", r[6] or "", r[7] or "",
+            ])
+
+        # Autoancho
+        for col in ws.columns:
+            max_len = 0
+            col_letter = col[0].column_letter
+            for cell in col:
+                val = "" if cell.value is None else str(cell.value)
+                if len(val) > max_len:
+                    max_len = len(val)
+            ws.column_dimensions[col_letter].width = min(max_len + 2, 42)
+
+        wb.save(ruta_xlsx)
+        if registros:
+            messagebox.showinfo("Backup", f"Excel generado:\n{ruta_xlsx}")
+        else:
+            messagebox.showinfo(
+                "Backup", f"No había registros.\nSe generó PLANTILLA Excel:\n{ruta_xlsx}")
+        abrir_carpeta(excel_dir)
         return True
+
+    except ImportError:
+        # Fallback a PDF si falta openpyxl (incluye solo encabezados si no hay datos)
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.units import cm
+        except Exception:
+            messagebox.showerror(
+                "Falta dependencia",
+                "No se pudo generar Excel (openpyxl no instalado) ni PDF de respaldo.\n"
+                "Instalá:\n  pip install openpyxl reportlab"
+            )
+            return False
+
+        ruta_pdf = os.path.join(excel_dir, f"backup_{ts}.pdf")
+        c = canvas.Canvas(ruta_pdf, pagesize=A4)
+        page_w, page_h = A4
+        left, top = 1.2 * cm, page_h - 1.2 * cm
+        line_h = 0.55 * cm
+
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(
+            left, top, "ID  |  Legajo  |  Nombre  |  Solutia  |  DNI  |  Clave  |  Fecha  |  Sucursal")
+        c.setFont("Helvetica", 9)
+        y = top - line_h
+
+        if registros:
+            for r in registros:
+                texto = f"{r[0]} | {r[1] or ''} | {r[2] or ''} | {r[3] or ''} | {r[4] or ''} | {r[5] or ''} | {r[6] or ''} | {r[7] or ''}"
+                c.drawString(left, y, texto[:180])
+                y -= line_h
+
+        c.showPage()
+        c.save()
+        if registros:
+            messagebox.showinfo(
+                "Backup", f"PDF de respaldo generado:\n{ruta_pdf}")
+        else:
+            messagebox.showinfo(
+                "Backup", f"No había registros.\nSe generó PLANTILLA PDF:\n{ruta_pdf}")
+        abrir_carpeta(excel_dir)
+        return True
+
     except Exception as e:
         messagebox.showerror("Error", f"No se pudo guardar el Excel:\n{e}")
         return False
@@ -256,3 +308,139 @@ def abrir_carpeta(path: str) -> bool:
 def abrir_carpeta_pdfs() -> bool:
     from app.pdf_generator import PDF_DIR
     return abrir_carpeta(PDF_DIR)
+
+
+def importar_desde_excel(ruta_xlsx: str) -> dict:
+    """
+    Importa un Excel con el MISMO formato que el backup exportado:
+    Encabezados esperados (case-insensitive):
+      ID | Legajo | Nombre completo | Nombre solutia | DNI | Clave | Fecha creación | Sucursal
+    - Si 'Clave' viene vacía: se genera automáticamente (DNI+fecha -> ofuscada).
+    - Si 'Clave' viene con valor: se guarda tal cual (sin re-ofuscar).
+    - DNI duplicado: se omite y se registra en el log.
+    Devuelve: {'insertados': int, 'saltados': int, 'log': ruta_log}
+    """
+    wb = load_workbook(ruta_xlsx, data_only=True)
+    ws = wb.active
+
+    # Mapear encabezados (case-insensitive)
+    header_row = [(str(c.value).strip() if c.value is not None else "")
+                  for c in ws[1]]
+    hdr_idx = {h.upper(): i for i, h in enumerate(header_row)}
+
+    def col(*names):
+        for n in names:
+            u = n.upper()
+            if u in hdr_idx:
+                return hdr_idx[u]
+        return None
+
+    idx_id = col("ID")
+    idx_legajo = col("LEGAJO")
+    idx_nombre = col("NOMBRE COMPLETO", "NOMBRE")
+    idx_solutia = col("NOMBRE SOLUTIA", "NOMBRE SISTEMA")
+    idx_dni = col("DNI")
+    idx_clave = col("CLAVE")
+    idx_fecha = col("FECHA CREACIÓN", "FECHA CREACION", "FECHA")
+    idx_sucursal = col("SUCURSAL")
+
+    requeridos = [idx_nombre, idx_dni]
+    if any(i is None for i in requeridos):
+        messagebox.showerror(
+            "Importar Excel", "Encabezados mínimos no encontrados: 'Nombre completo' y 'DNI'.")
+        return {"insertados": 0, "saltados": 0, "log": ""}
+
+    ensure_dirs("excel")
+    log_dir = os.path.join(base_dir(), "excel")
+    ts = datetime.now().strftime("%Y%m%d_%H%M")
+    ruta_log = os.path.join(log_dir, f"import_log_{ts}.txt")
+
+    insertados = 0
+    saltados = 0
+    logs = []
+
+    # Iterar filas
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if row is None or all(v in (None, "") for v in row):
+            continue
+
+        def val(idx):
+            if idx is None:
+                return None
+            v = row[idx]
+            return "" if v is None else str(v).strip()
+
+        nombre = (val(idx_nombre) or "").upper()
+        dni = (val(idx_dni) or "")
+        legajo = (val(idx_legajo) or None)
+        if legajo:
+            legajo = legajo.upper()
+        solutia = (val(idx_solutia) or None)
+        if solutia:
+            solutia = solutia.upper()
+        sucursal = (val(idx_sucursal) or None)
+        if sucursal:
+            sucursal = sucursal.upper()
+
+        if not nombre:
+            saltados += 1
+            logs.append("Fila omitida: NOMBRE vacío.")
+            continue
+        if not dni.isdigit():
+            saltados += 1
+            logs.append(f"Fila omitida: DNI inválido ({dni}).")
+            continue
+        if db.existe_dni(dni):
+            saltados += 1
+            logs.append(f"Fila omitida: DNI duplicado en base ({dni}).")
+            continue
+
+        # Fecha
+        raw_fecha = row[idx_fecha] if idx_fecha is not None else None
+        if isinstance(raw_fecha, datetime):
+            fecha_norm = raw_fecha.strftime("%Y-%m-%d")
+        else:
+            try:
+                fecha_norm = normalizar_fecha(
+                    str(raw_fecha) if raw_fecha not in (None, "") else None)
+            except ValueError as ve:
+                saltados += 1
+                logs.append(
+                    f"Fila omitida: fecha inválida ({raw_fecha}). {ve}")
+                continue
+
+        # Clave
+        raw_clave = val(idx_clave) if idx_clave is not None else ""
+        if raw_clave:
+            clave = raw_clave  # guardar tal cual
+        else:
+            # generar a partir de DNI (comportamiento estándar)
+            clave = ofuscar_clave(generar_clave(dni))
+
+        try:
+            db.insertar_cajero(
+                nombre_completo=nombre,
+                dni=dni,
+                clave=clave,
+                legajo=legajo,
+                nombre_sistema=solutia,
+                sucursal=sucursal,
+                fecha_creacion=fecha_norm
+            )
+            insertados += 1
+        except Exception as e:
+            saltados += 1
+            logs.append(f"Error al insertar DNI {dni}: {e}")
+
+    # Guardar log
+    with open(ruta_log, "w", encoding="utf-8") as f:
+        f.write("== Importación desde Excel ==\n")
+        f.write(f"Archivo: {ruta_xlsx}\n")
+        f.write(f"Insertados: {insertados} | Saltados: {saltados}\n\n")
+        for ln in logs:
+            f.write(ln + "\n")
+
+    messagebox.showinfo("Importación",
+                        f"Insertados: {insertados}\nSaltados: {saltados}\n\nLog:\n{ruta_log}")
+    abrir_carpeta(log_dir)
+    return {"insertados": insertados, "saltados": saltados, "log": ruta_log}
